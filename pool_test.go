@@ -5,6 +5,7 @@ package ppool
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"testing"
 	"time"
@@ -13,18 +14,19 @@ import (
 )
 
 func TestPool(t *testing.T) {
-	x := new(ResourePool)
+	x := New()
 	x.IdleTime, _ = time.ParseDuration("5s")
 	x.New = contructor
-	x.Get() //new connection
 	a, _ := x.Get()
-	b, _ := a.(*sql.DB)
-	x.Get() //new connection
+	b := a.(*sql.DB)
+	t.Log(x.IdleResourceCount(), x.TotalResourceCount())
 	x.Put(b, func() { b.Close() })
-	x.Get() //idle connection
-	x.Get()
-	d, _ := time.ParseDuration("10s")
-	<-time.After(d)
+	t.Log(x.IdleResourceCount(), x.TotalResourceCount())
+	e, err := x.Get()
+	t.Log(err)
+	c := e.(*sql.DB)
+
+	log.Println(x.Put(c))
 }
 
 func contructor() interface{} {

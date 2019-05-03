@@ -1,14 +1,17 @@
 //@author Devansh Gupta
 //This file contains code Pool implementation
-
+//It has to methods Get and Put
+//Get method reuse an idle resource if have else create new with help of factory function
 package ppool
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
 )
 
+//ResourePool, contains attributes containing info about Resource Pool
 type ResourePool struct {
 	//IdleTime, for how long persist idle resource
 	IdleTime time.Duration
@@ -19,19 +22,37 @@ type ResourePool struct {
 	totalcount int
 	//Total resource ready to be reused
 	idlecount int
-	//list maintains array of idle connection
+	//list maintains list of all connection which are idlized ever
 	list []*idleresource
+	//mutex, provides synchronization
+	mutex *sync.Mutex
+	//wait , ensures that get method blocks untill a idle resource is being processed
+	//it also help to avoid race conditon
+	//i.e. run TestPool in pool_test.go
+	wait *sync.WaitGroup
 }
 
-//SetNew, sets constructor for new resources
-func (r *ResourePool) SetNew(x func() interface{}) {
-	r.New = x
+//New, is the initializer for the ResourcePool
+func New() *ResourePool {
+	x := new(ResourePool)
+	x.mutex = new(sync.Mutex)
+	x.wait = new(sync.WaitGroup)
+	return x
+}
+
+//EmptyDestructer, is the utlity function which returns an empty function i.e. func(){}
+func EmptyDestructer() func() {
+	return func() {}
 }
 
 //Get, Retrives one resource from pool
 //Returns resource and boolean value indicates, whether resource is reused or not
 func (r *ResourePool) Get() (interface{}, bool) {
-	if r.idlecount == 0 { //We have zero idle resource
+	r.wait.Wait() //It blocks get method if any put method is online
+	r.mutex.Lock()
+	k := r.idlecount
+	r.mutex.Unlock()
+	if k == 0 { //We have zero idle resource
 		r.totalcount++
 		log.Println("New Object created")
 		return r.New(), false
@@ -41,42 +62,38 @@ func (r *ResourePool) Get() (interface{}, bool) {
 
 func (r *ResourePool) getidle() interface{} {
 	for _, v := range r.list {
-		if !v.isdead {
+		if v.state == state_idle {
 			log.Println("Waiting for channel")
 			v.comeback <- true //This terminates life monitering go routine
 			log.Println("Idle object reused")
-			return v.res
+			p := <-v.resch //Waiting for channel to return the value
+			return p
 		}
 	}
 	return 1
 }
 
-//Put, puts a reusable resource in pool
-func (r *ResourePool) Put(a interface{}, closefunc func()) {
-	x := newidleresource(a)
-	r.list = append(r.list, x)
-	r.idlecount++ //Increase idle count
-	log.Println("Idle connection accepted")
-	go func(i *idleresource, b interface{}, closef func()) {
-		m := new(sync.Mutex) //To avoid race condition
+//IdleResourceCount, returns no of idle resource in pool
+func (r ResourePool) IdleResourceCount() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.idlecount
+}
 
-		select {
-		case <-i.comeback:
-			m.Lock()
-			r.idlecount--
-			m.Unlock()
-			return //Ends goroutine
-		case <-time.After(r.IdleTime):
-			i.isdead = true //Indicate that resource is dead
-			closef()        //This might close the resource
-			m.Lock()
-			r.totalcount--
-			r.idlecount--
-			m.Unlock()
-			log.Println("Object is destroyed")
-			return
-		}
-	}(x, a, closefunc)
+//TotalResourceCount, returns no of total live resource in pool
+func (r ResourePool) TotalResourceCount() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	return r.totalcount
+}
+
+//ActiveResourceCount, returns no. of active resource
+func (r ResourePool) ActiveResourceCount() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	return r.totalcount - r.idlecount
 }
 
 //idleresource, handles idle resource
@@ -84,12 +101,31 @@ type idleresource struct {
 	//comeback channel
 	comeback chan bool
 	res      interface{}
-
-	isdead bool
+	resch    chan interface{}
+	state    resstate
+	closef   func()
 }
 
-func newidleresource(res interface{}) *idleresource {
+type resstate int8
+
+const (
+	state_active = resstate(1)
+	state_idle   = resstate(2)
+	state_dead   = resstate(3)
+)
+
+func newidleresource(res interface{}, f func()) *idleresource {
 	x := new(idleresource)
+	x.resch = make(chan interface{})
+	x.res = res
 	x.comeback = make(chan bool)
+	x.closef = f
+
 	return x
 }
+
+var (
+	DeadResource      = errors.New("Dead Resource ")
+	IdleAlready       = errors.New("Resource is already in Idle State")
+	NoDestroyFunction = errors.New("Destroy function not defined")
+)
