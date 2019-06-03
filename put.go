@@ -4,30 +4,46 @@ package ppool
 import (
 	"log"
 	"time"
+
+	"github.com/devansh42/dsal"
 )
 
 //Put, puts a reusable resource in pool
 func (r *ResourePool) Put(a interface{}, closefunc ...func()) error {
 
+	t := new(dsal.StackList)
+
+	var err error
+	var found bool
 	//Check for previous existence
-	for _, v := range r.list {
+	for r.list.Length() > 0 {
+		iv, _ := r.list.Pop()
+		v := iv.(*idleresource)
+		t.Push(v)
+
 		if v.res == a { //As Pointer are comparable
+			//Yeah! We found one
+			found = true //Found one resource
 			switch v.state {
 			case state_dead:
 				log.Println(DeadResource)
-				return DeadResource
+				err = DeadResource
 			case state_idle:
 				log.Println(IdleAlready)
-				return IdleAlready
+				err = IdleAlready
 			default:
 				r.wait.Add(1)
 				go idleRes(r, v) //Make this ideal again
-				return nil
+				err = nil
 			}
-
+			break
 		}
-
 	}
+	dsal.DropStack(r.list, t)
+	if found {
+		return err //Found concering error
+	}
+
 	//So we don't know this object
 	if len(closefunc) == 0 {
 		log.Println(NoDestroyFunction)
@@ -35,7 +51,7 @@ func (r *ResourePool) Put(a interface{}, closefunc ...func()) error {
 	}
 
 	x := newidleresource(a, closefunc[0])
-	r.list = append(r.list, x)
+	r.list.Push(x)
 	r.wait.Add(1)
 	go idleRes(r, x)
 	return nil

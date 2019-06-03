@@ -6,9 +6,12 @@ package ppool
 
 import (
 	"errors"
-	"log"
 	"sync"
 	"time"
+
+	"github.com/golang/glog"
+
+	"github.com/devansh42/dsal"
 )
 
 //ResourePool, contains attributes containing info about Resource Pool
@@ -23,7 +26,7 @@ type ResourePool struct {
 	//Total resource ready to be reused
 	idlecount int
 	//list maintains list of all connection which are idlized ever
-	list []*idleresource
+	list *dsal.StackList
 	//mutex, provides synchronization
 	mutex *sync.Mutex
 	//wait , ensures that get method blocks untill a idle resource is being processed
@@ -54,23 +57,37 @@ func (r *ResourePool) Get() (interface{}, bool) {
 	r.mutex.Unlock()
 	if k == 0 { //We have zero idle resource
 		r.totalcount++
-		log.Println("New Object created")
+		glog.V(2).Info("New Connection created")
 		return r.New(), false
 	}
 	return r.getidle(), true
 }
 
 func (r *ResourePool) getidle() interface{} {
-	for _, v := range r.list {
-		if v.state == state_idle {
-			log.Println("Waiting for channel")
-			v.comeback <- true //This terminates life monitering go routine
-			log.Println("Idle object reused")
-			p := <-v.resch //Waiting for channel to return the value
-			return p
+
+	t := new(dsal.StackList) //Temporary Stack for holding objects
+	var p interface{}
+	for r.list.Length() > 0 {
+
+		iv, _ := r.list.Pop()
+		v := iv.(*idleresource)
+		t.Push(v) //Persist in temporary stack
+		if v.state == state_dead {
+			//Remove dead connections for stack
+			t.Pop()
 		}
+		if v.state == state_idle {
+			glog.V(2).Info("Waiting for Channel")
+			v.comeback <- true //This terminates life monitering go routine
+			glog.V(2).Info("Resource Reused")
+			p = <-v.resch //Waiting for channel to return the value
+			break         //Terminating Loop
+		}
+
 	}
-	return 1
+	dsal.DropStack(r.list, t)
+
+	return p
 }
 
 //IdleResourceCount, returns no of idle resource in pool
