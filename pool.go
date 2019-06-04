@@ -40,6 +40,7 @@ func New() *ResourePool {
 	x := new(ResourePool)
 	x.mutex = new(sync.Mutex)
 	x.wait = new(sync.WaitGroup)
+	x.list = dsal.NewStackList() //For holding objects
 	return x
 }
 
@@ -65,7 +66,7 @@ func (r *ResourePool) Get() (interface{}, bool) {
 
 func (r *ResourePool) getidle() interface{} {
 
-	t := new(dsal.StackList) //Temporary Stack for holding objects
+	t := dsal.NewStackList() //Temporary Stack for holding objects
 	var p interface{}
 	for r.list.Length() > 0 {
 

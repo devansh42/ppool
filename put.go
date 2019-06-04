@@ -11,7 +11,7 @@ import (
 //Put, puts a reusable resource in pool
 func (r *ResourePool) Put(a interface{}, closefunc ...func()) error {
 
-	t := new(dsal.StackList)
+	t := dsal.NewStackList()
 
 	var err error
 	var found bool
